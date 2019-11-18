@@ -105,14 +105,14 @@ class VAECycleGan(nn.Module):
         """
         G1_out, mu1, log_var1 = self.vae1(x_in)
         KLD = -self.lam1 * (torch.mean(1 + log_var1 - mu1.pow(2) - log_var1.exp()))
-        BCE = self.lam2 * (F.mse_loss(G1_out, x_in, reduction='mean'))
+        BCE = self.lam2 * (F.binary_cross_entropy(G1_out, x_in, reduction='mean'))
         L1 = (BCE + KLD)
         #print(G1_out.shape, log_var1.shape, mu1.pow(2).shape)
 
 
         G2_out, mu2, log_var2 = self.vae2(y_in)
         KLD_2 = -self.lam1 * (torch.mean(1 + log_var2 - mu2.pow(2) - log_var2.exp()))
-        BCE_2 = self.lam2 * (F.mse_loss(G2_out, y_in, reduction='mean'))
+        BCE_2 = self.lam2 * (F.binary_cross_entropy(G2_out, y_in, reduction='mean'))
 
         L = L1 + (BCE_2 + KLD_2)
         L.backward()
@@ -172,7 +172,7 @@ class VAECycleGan(nn.Module):
 
         L1 = -self.lam3 * (torch.mean(1 + log_var1 - mu1.pow(2) - log_var1.exp()))
         L1 = L1 - self.lam3 * (torch.mean(1 + log_var2 - mu2.pow(2) - log_var2.exp()))
-        L1 = L1 + self.lam4 * (F.mse_loss(G121_cycle, x_in))
+        L1 = L1 + self.lam4 * (F.binary_cross_entropy(G121_cycle, x_in))
 
         mu2, log_var2 = self.vae2.encode(y_in)
         G1_reconstr = self.vae1.decode(self.vae2.sampling(mu2, log_var2))
@@ -181,7 +181,7 @@ class VAECycleGan(nn.Module):
 
         L2 = -self.lam3 * (torch.mean(1 + log_var2 - mu2.pow(2) - log_var2.exp()))
         L2 = L2 - self.lam3 * (torch.mean(1 + log_var1 - mu1.pow(2) - log_var1.exp()))
-        L2 = L2 + self.lam4 * (F.mse_loss(G212_cycle, y_in))
+        L2 = L2 + self.lam4 * (F.binary_cross_entropy(G212_cycle, y_in))
 
         L = L1 + L2
         L.backward()
@@ -314,6 +314,7 @@ class VAECycleGan(nn.Module):
 
 
         [x,_] = next(iter(self.X_dataloader))
+        x = x.to(device)
         #x = x.flatten(1,-1).to(device)
         trans, mu, log_var = self.vae1(x)
         trans = trans.reshape((-1, 3, 128, 128)).permute(0,2,3,1).cpu()[0].data.numpy()
@@ -345,7 +346,7 @@ def main():
         "lam4": 2.0            # CYCLEGAN match loss
     }
     net = VAECycleGan(args)
-    net.train(num_epochs=60)
+    net.train(num_epochs=10)
     net.test()
 
     torch.save(net.state_dict(), "model.pth")

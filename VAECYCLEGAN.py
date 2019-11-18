@@ -32,8 +32,8 @@ class VAECycleGan(nn.Module):
         self.lam3 = args["lam3"]
         self.lam4 = args["lam4"]
         
-        self.vae1 = VAE(self.x_dim, h_dim1 = 1024, h_dim2 = 512, z_dim = self.z_dim).to(device)
-        self.vae2 = VAE(self.x_dim, h_dim1 = 1024, h_dim2 = 512, z_dim = self.z_dim).to(device)
+        self.vae1 = VAE(self.x_dim, h_dim1 = 2048, h_dim2 = 1024, z_dim = self.z_dim).to(device)
+        self.vae2 = VAE(self.x_dim, h_dim1 = 2048, h_dim2 = 1024, z_dim = self.z_dim).to(device)
         #self.share_vae_features()
         
         self.D1 = Discriminator(self.x_dim).to(device)

@@ -7,6 +7,86 @@ from torchvision import datasets, transforms
 from torch.autograd import Variable
 from torchvision.utils import save_image
 
+class Reshape(nn.Module):
+    def __init__(self, shape):
+        super(Reshape, self).__init__()
+        self.shape = shape
+
+    def forward(self, x):
+        return x.reshape(self.shape)
+
+class VAE_CONV(nn.Module):
+
+    def __init__(self, x_dim, h_dim1, h_dim2, z_dim):
+        super(VAE_CONV, self).__init__()
+        self.conv1 = nn.Conv2d(3, 32, kernel_size=5, stride=2, padding=2)
+        self.conv2 = nn.Conv2d(32, 64, kernel_size=5, stride=2, padding=2)
+        self.conv3 = nn.Conv2d(64, 128, kernel_size=5, stride=2, padding=2)
+        self.conv4 = nn.Conv2d(128, 128, kernel_size=3, stride=1, padding=1)
+
+        self.fc51 = nn.Linear(4*4*128, z_dim)
+        self.fc52 = nn.Linear(4*4*128, z_dim)
+
+        self.up1 = nn.Linear(z_dim, 4*4*128)
+
+        self.conv5 = nn.Conv2d(128, 128, kernel_size=3, stride=1, padding=1)
+        self.conv6 = nn.Conv2d(128, 64, kernel_size=3, stride=1, padding=1)
+        self.conv7 = nn.Conv2d(64, 32, kernel_size=3, stride=1, padding=1)
+        self.conv8 = nn.Conv2d(32, 3, kernel_size=3, stride=1, padding=1)
+
+        self.Encoder = nn.Sequential(
+            self.conv1,
+            nn.ReLU(),
+            nn.BatchNorm2d(32),
+            self.conv2,
+            nn.ReLU(),
+            nn.BatchNorm2d(64),
+            self.conv3,
+            nn.ReLU(),
+            nn.BatchNorm2d(128),
+            self.conv4,
+            nn.ReLU(),
+            nn.BatchNorm2d(128),
+            nn.MaxPool2d((4,4)),
+        )
+
+        self.Decoder = nn.Sequential(
+            self.up1,
+            Reshape((-1,128,4,4)),
+            self.conv5,
+            nn.ReLU(),
+            nn.BatchNorm2d(128),
+            nn.Upsample(scale_factor=4, mode='bilinear'),
+            self.conv6,
+            nn.ReLU(),
+            nn.BatchNorm2d(128),
+            nn.Upsample(scale_factor=2, mode='bilinear'),
+            self.conv7,
+            nn.ReLU(),
+            nn.BatchNorm2d(64),
+            nn.Upsample(scale_factor=2, mode='bilinear'),
+            self.conv8,
+            nn.Upsample(scale_factor=2, mode='bilinear'),
+            nn.Sigmoid(),
+        )
+
+    def encode(self, x):
+        h = self.Encoder(x)
+        return self.fc51(h.flatten(1,-1)), self.fc52(h.flatten(1,-1)) # mu, log_var
+    
+    def sampling(self, mu, log_var):
+        std = torch.exp(0.5*log_var)
+        eps = torch.randn_like(std)
+        return eps.mul(std).add_(mu) # return z sample
+        
+    def decode(self, z):
+        output = self.Decoder(z)
+        return output
+    
+    def forward(self, x):
+        mu, log_var = self.encode(x)
+        z = self.sampling(mu, log_var)
+        return self.decode(z), mu, log_var
 
 class VAE(nn.Module):
     def __init__(self, x_dim, h_dim1, h_dim2, z_dim):
@@ -49,8 +129,10 @@ class VAE(nn.Module):
             nn.BatchNorm1d(h_dim1),
             #nn.ReLU(),
             self.fc6,
-            nn.ReLU()
+            #nn.ReLU()
+            nn.Sigmoid(),
         )
+
         
     def encode(self, x):
         h = self.Encoder(x)
@@ -130,7 +212,7 @@ if __name__ == "__main__":
         
     optimizer = optim.Adam(vae.parameters())
 
-    for epoch in range(1, 11):
+    for epoch in range(1, 51):
         train(epoch)
         test()
         

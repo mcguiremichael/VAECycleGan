@@ -10,8 +10,8 @@ import numpy as np
 from torchvision import datasets, transforms
 from torch.autograd import Variable
 from torchvision.utils import save_image
-from VAEGAN import VAE
-from net import Discriminator
+from VAEGAN import VAE, VAE_CONV
+from net import Discriminator, ConvDiscrim
 from copy import deepcopy
 import matplotlib.pyplot as plt
 import random
@@ -32,56 +32,32 @@ class VAECycleGan(nn.Module):
         self.lam3 = args["lam3"]
         self.lam4 = args["lam4"]
 
-        self.vae1 = VAE(self.x_dim, h_dim1 = 512, h_dim2 = 256, z_dim = self.z_dim).to(device)
-        self.vae2 = VAE(self.x_dim, h_dim1 = 512, h_dim2 = 256, z_dim = self.z_dim).to(device)
+        self.vae1 = VAE_CONV(self.x_dim, h_dim1 = 1024, h_dim2 = 1024, z_dim = self.z_dim).to(device)
+        self.vae2 = VAE_CONV(self.x_dim, h_dim1 = 1024, h_dim2 = 1024, z_dim = self.z_dim).to(device)
         self.share_vae_features()
 
-        self.D1 = Discriminator(self.x_dim).to(device)
-        self.D2 = Discriminator(self.x_dim).to(device)
+        self.D1 = ConvDiscrim(self.x_dim).to(device)
+        self.D2 = ConvDiscrim(self.x_dim).to(device)
+        
         self.G1 = self.vae1.Decoder
         self.G2 = self.vae2.Decoder
 
-        """
-        self.young_data_fname = "kowalcyzk_logNorm_young_variableSubset.csv"
-        self.old_data_fname = "kowalcyzk_logNorm_old_variableSubset.csv"
-        self.young_data = np.genfromtxt(self.young_data_fname, delimiter=",").transpose()[1:,1:]
-        self.old_data = np.genfromtxt(self.old_data_fname, delimiter=",").transpose()[1:,1:]
-        """
+
 
         self.X_dataloader = torch.utils.data.DataLoader(
-        datasets.CIFAR100('../data', train=True, download=True,
-                       transform=transforms.Compose([
-                           transforms.ToTensor(),
-                           #transforms.Normalize((0.1307,), (0.3081,))
-                           transforms.Normalize(mean=[0.485, 0.456, 0.406],
-                                     std=[0.229, 0.224, 0.225])
-                       ])),
-        batch_size=100, shuffle=True)
+            datasets.ImageFolder("horse2zebra/trainA", transform=transforms.Compose([
+                transforms.Resize(128, interpolation=2),
+                transforms.ToTensor(),
+            ])),
+        batch_size=64, shuffle=True)
         self.Y_dataloader = torch.utils.data.DataLoader(
-        datasets.CIFAR100('../data', train=True, download=True,
-                       transform=transforms.Compose([
-                           transforms.ToTensor(),
-                           #transforms.Normalize((0.1307,), (0.3081,))
-                           transforms.Grayscale()
-                       ])),
-        batch_size=100, shuffle=True)
+            datasets.ImageFolder("horse2zebra/trainA", transform=transforms.Compose([
+                transforms.Resize(128, interpolation=2),
+                transforms.ToTensor(),
+            ])),
+        batch_size=64, shuffle=True)
 
-        """
-        self.young_data = torch.from_numpy(self.young_data).to(device).float()
-        self.old_data = torch.from_numpy(self.old_data).to(device).float()
-
-
-        self.young_train, self.young_test = self.split_data(self.young_data, 0.1)
-        self.old_train, self.old_test = self.split_data(self.old_data, 0.1)
-
-        self.young_ds = utils.TensorDataset(self.young_train)
-        self.young_test_ds = utils.TensorDataset(self.young_test)
-        self.young_dataloader = utils.DataLoader(self.young_ds, batch_size=10, shuffle=True)
-        self.old_ds = utils.TensorDataset(self.old_train)
-        self.old_test_ds = utils.TensorDataset(self.old_test)
-        self.old_dataloader = utils.DataLoader(self.old_ds, batch_size=10, shuffle=True)
-
-        """
+        
 
         self.G_optim = optim.Adam(list(self.G1.parameters()) + list(self.G2.parameters()), lr=0.001)
         self.D_optim = optim.Adam(list(self.D1.parameters()) + list(self.D2.parameters()), lr=0.001)
@@ -105,9 +81,21 @@ class VAECycleGan(nn.Module):
         return train, test
 
     def share_vae_features(self):
-        self.vae1.fc31 = self.vae2.fc31
-        self.vae1.fc32 = self.vae2.fc32
-        self.vae1.fc4 = self.vae2.fc4
+        self.vae1.fc52 = self.vae2.fc52
+        self.vae1.up1 = self.vae2.up1
+        self.vae1.conv4 = self.vae2.conv4
+        self.vae1.fc51 = self.vae2.fc51
+        self.vae1.conv5 = self.vae2.conv5
+        """
+        self.conv4 = nn.Conv2d(128, 128, kernel_size=3, stride=1, padding=1)
+
+        self.fc51 = nn.Linear(4*4*128, z_dim)
+        self.fc52 = nn.Linear(4*4*128, z_dim)
+
+        self.up1 = nn.Linear(z_dim, 4*4*128)
+
+        self.conv5 = nn.Conv2d(128, 128, kernel_size=3, stride=1, padding=1)
+        """
 
     def VAELoss(self, x_in, y_in):
         """
@@ -117,14 +105,14 @@ class VAECycleGan(nn.Module):
         """
         G1_out, mu1, log_var1 = self.vae1(x_in)
         KLD = -self.lam1 * (torch.mean(1 + log_var1 - mu1.pow(2) - log_var1.exp()))
-        BCE = self.lam2 * (F.mse_loss(G1_out, x_in.view(-1, self.x_dim), reduction='mean'))
+        BCE = self.lam2 * (F.mse_loss(G1_out, x_in, reduction='mean'))
         L1 = (BCE + KLD)
         #print(G1_out.shape, log_var1.shape, mu1.pow(2).shape)
 
 
         G2_out, mu2, log_var2 = self.vae2(y_in)
         KLD_2 = -self.lam1 * (torch.mean(1 + log_var2 - mu2.pow(2) - log_var2.exp()))
-        BCE_2 = self.lam2 * (F.mse_loss(G2_out, y_in.view(-1,self.x_dim), reduction='mean'))
+        BCE_2 = self.lam2 * (F.mse_loss(G2_out, y_in, reduction='mean'))
 
         L = L1 + (BCE_2 + KLD_2)
         L.backward()
@@ -224,25 +212,20 @@ class VAECycleGan(nn.Module):
                 self.D_optim = optim.Adam(list(self.D1.parameters()) + list(self.D2.parameters()), lr=0.0003)
                 self.VAE_optim = optim.Adam(list(self.vae1.parameters()) + list(self.vae2.parameters()), lr=0.0003)
 
-            train_steps = min(len(self.old_dataloader), len(self.young_dataloader))
+            train_steps = min(len(self.X_dataloader), len(self.Y_dataloader))
 
             self.X_dataloader = torch.utils.data.DataLoader(
-            datasets.CIFAR100('../data', train=True, download=True,
-                           transform=transforms.Compose([
-                               transforms.ToTensor(),
-                               #transforms.Normalize((0.1307,), (0.3081,))
-                               transforms.Normalize(mean=[0.485, 0.456, 0.406],
-                                         std=[0.229, 0.224, 0.225])
-                           ])),
-            batch_size=100, shuffle=True)
+                datasets.ImageFolder("horse2zebra/trainA", transform=transforms.Compose([
+                    transforms.Resize(128, interpolation=2),
+                    transforms.ToTensor(),
+                ])),
+                batch_size=32, shuffle=True)
             self.Y_dataloader = torch.utils.data.DataLoader(
-            datasets.CIFAR100('../data', train=True, download=True,
-                           transform=transforms.Compose([
-                               transforms.ToTensor(),
-                               #transforms.Normalize((0.1307,), (0.3081,))
-                               transforms.Grayscale()
-                           ])),
-            batch_size=100, shuffle=True)
+                datasets.ImageFolder("horse2zebra/trainA", transform=transforms.Compose([
+                    transforms.Resize(128, interpolation=2),
+                    transforms.ToTensor(),
+                ])),
+                batch_size=32, shuffle=True)
 
             x_data = iter(self.X_dataloader)
             y_data = iter(self.Y_dataloader)
@@ -254,8 +237,11 @@ class VAECycleGan(nn.Module):
                 [x,_] = next(x_data)
                 [y,_] = next(y_data)
 
-                x = x.to(device).flatten(1, -1)
-                y = y.flatten(1,-1)
+                x = x.to(device)
+                y = y.to(device)    
+
+                #x = x.to(device).flatten(1, -1)
+                #y = y.to(device).flatten(1,-1)
                 #print(torch.max(x), torch.min(x))
                 # Zero out all optimizers
                 #self.G_optim.zero_grad()
@@ -327,54 +313,22 @@ class VAECycleGan(nn.Module):
         self.D2.eval()
 
 
-        [x,_] = next(iter(self.Z_dataloader))
-        x = x.flatten(1,-1).to(device)
+        [x,_] = next(iter(self.X_dataloader))
+        #x = x.flatten(1,-1).to(device)
         trans, mu, log_var = self.vae1(x)
-        trans = trans.reshape((-1, 1, 28, 28)).cpu()[0,0].data.numpy()
-        stylized = self.vae2.decode(self.vae1.sampling(mu, log_var)).reshape((-1,1,28,28)).cpu()[0,0].data.numpy()
+        trans = trans.reshape((-1, 3, 128, 128)).permute(0,2,3,1).cpu()[0].data.numpy()
+        stylized = self.vae2.decode(self.vae1.sampling(mu, log_var)).reshape((-1,3,128,128)).permute(0,2,3,1).cpu()[0].data.numpy()
 
         #plt.imshow(x.reshape((-1,1,28,28)).cpu()[0,0].data.numpy())
         #plt.show()
         #plt.imshow(trans)
         #plt.show()
-        cv2.imshow("original", x.reshape((-1,1,28,28)).cpu()[0,0].data.numpy())
-        cv2.waitKey(0)
-        cv2.imshow("reconstructed", trans)
-        cv2.waitKey(0)
-        cv2.imshow("stylized", stylized)
-        cv2.waitKey(0)
-
-
-
-
-        young_zero_p = (torch.sum((self.young_data <= 0.0).float()) / self.young_data.numel())
-        inferred_young_zero_p = (torch.sum(self.vae2(self.old_data)[0] <= 0).float() / self.old_data.numel())
-
-
-        old_zero_p = (torch.sum((self.old_data <= 0.0).float()) / self.old_data.numel()).cpu().data.numpy()
-        inferred_old_zero_p = (torch.sum(self.vae1(self.young_data)[0] <= 0).float() / self.young_data.numel()).cpu().data.numpy()
-
-        print("Ground truth proportion of 0's in young data: %f. Predicted: %f." % (young_zero_p, inferred_young_zero_p))
-        print("Ground truth proportion of 0's in old data: %f. Predicted: %f." % (old_zero_p, inferred_old_zero_p))
-
-        mu1, log_var1 = self.vae2.encode(self.old_data)
-        z1 = self.vae2.sampling(mu1, log_var1)
-        inferred_young = self.vae1.decode(z1)
-        mu2, log_var2 = self.vae1.encode(self.young_data)
-        z2 = self.vae1.sampling(mu2, log_var2)
-        inferred_old = self.vae2.decode(z2)
-
-        np.savetxt("YoungToOld.csv", torch.clamp(inferred_old, 0.0).cpu().data.numpy())
-        np.savetxt("OldToYoung.csv", torch.clamp(inferred_young, 0.0).cpu().data.numpy())
-        np.savetxt("Old_latent.txt", z1.cpu().data.numpy())
-        np.savetxt("Young_latent.txt", z2.cpu().data.numpy())
-
-
-        mu1, log_var1 = self.vae1.encode(self.young_data[0])
-        G2_reconstr = self.vae2.decode(self.vae1.sampling(mu1, log_var1))
-        mu2, log_var2 = self.vae2.encode(G2_reconstr)
-        G121_cycle = self.vae1.decode(self.vae2.sampling(mu2, log_var2))
-        print(self.young_data[0], G2_reconstr, G121_cycle)
+        plt.imshow(x.reshape((-1,3,128,128)).permute(0,2,3,1).cpu()[0].data.numpy())
+        plt.show()
+        plt.imshow(trans)
+        plt.show()
+        plt.imshow(stylized)
+        plt.show()
 
 
 
@@ -382,16 +336,16 @@ class VAECycleGan(nn.Module):
 
 def main():
     args = {
-        "x_dim": 2554,
-        "z_dim": 5,
-        "lam0": 5.0,            # Gan loss
+        "x_dim": 128*128*3,
+        "z_dim": 10,
+        "lam0": 1.0,            # Gan loss
         "lam1": 0.001,          # VAE KL loss
         "lam2": 2.0,            # VAE match loss
         "lam3": 0.001,           # CYCLEGAN KL loss
-        "lam4": 5.0            # CYCLEGAN match loss
+        "lam4": 2.0            # CYCLEGAN match loss
     }
     net = VAECycleGan(args)
-    net.train(num_epochs=50)
+    net.train(num_epochs=60)
     net.test()
 
     torch.save(net.state_dict(), "model.pth")
